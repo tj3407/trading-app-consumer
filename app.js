@@ -3,7 +3,7 @@ const app = express();
 const http = require("http").Server(app);
 const bodyParser = require("body-parser");
 const { Kafka } = require('kafkajs');
-// const WebSocket = require('ws');
+const WebSocket = require('ws');
 
 app.use(bodyParser.json());
 app.use(bodyParser.urlencoded({ extended: false }));
@@ -14,7 +14,7 @@ app.use(function(req, res, next) {
 });
 const PORT = process.env.PORT || 5000;
 
-// const wss = new WebSocket.Server({ port: 3030 });
+const wss = new WebSocket.Server({ port: 3030 });
 
 app.get("/", function(req, res) {
   res.send("Service is running")
