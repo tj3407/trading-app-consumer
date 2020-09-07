@@ -1,8 +1,9 @@
+require("dotenv").config();
 const express = require("express");
 const app = express();
 const http = require("http").Server(app);
 const bodyParser = require("body-parser");
-const { Kafka } = require('kafkajs');
+const Kafka = require("node-rdkafka");
 const WebSocket = require('ws');
 
 app.use(bodyParser.json());
@@ -26,69 +27,48 @@ var server = app.listen(PORT, () =>
 
 const io = require("socket.io").listen(server);
 
-const config = {
-    kafka: {
-      TOPIC: 'clicks',
-      BROKERS: ['3.16.10.31:9092'],
-      GROUPID: 'clicks-consumer-group',
-      CLIENTID: 'sample-kafka-client'
-    }
-}
+var kafkaConf = {
+  "group.id": "cloudkarafka-clicks",
+  "metadata.broker.list": process.env.CLOUDKARAFKA_BROKERS,
+  "socket.keepalive.enable": true,
+  "security.protocol": "SASL_SSL",
+  "sasl.mechanisms": "SCRAM-SHA-256",
+  "sasl.username": process.env.CLOUDKARAFKA_USERNAME,
+  "sasl.password": process.env.CLOUDKARAFKA_PASSWORD,
+  "debug": "generic,broker,security"
+};
 
-const kafka = new Kafka({
-  clientId: config.kafka.CLIENTID,
-  brokers: config.kafka.BROKERS
-})
-
-const topic = config.kafka.TOPIC
-const consumer = kafka.consumer({
-  groupId: config.kafka.GROUPID
-})
-
+const prefix = process.env.CLOUDKARAFKA_USERNAME;
+const topics = [`${prefix}-clicks`];
+const consumer = new Kafka.KafkaConsumer(kafkaConf, {
+  "auto.offset.reset": "beginning"
+});
 var messages = [];
 
-const run = async () => {
-  await consumer.connect()
-  await consumer.subscribe({ topic, fromBeginning: true })
-  await consumer.run({
-    eachMessage: async ({ message }) => {
-      try {
-        const jsonObj = JSON.parse(message.value.toString())
-        console.log(jsonObj)
-        messages.push(jsonObj);
-        io.sockets.emit('message', messages);
-      } catch (error) {
-        console.log('err=', error)
-      }
-    }
-  })
-}
-
-run().catch(e => console.error(`[example/consumer] ${e.message}`, e))
-
-const errorTypes = ['unhandledRejection', 'uncaughtException']
-const signalTraps = ['SIGTERM', 'SIGINT', 'SIGUSR2']
-
-errorTypes.map(type => {
-  process.on(type, async e => {
-    try {
-      console.log(`process.on ${type}`)
-      console.error(e)
-      await consumer.disconnect()
-      process.exit(0)
-    } catch (_) {
-      process.exit(1)
-    }
-  })
-})
-
-signalTraps.map(type => {
-  process.once(type, async () => {
-    try {
-      await consumer.disconnect()
-    } finally {
-      process.kill(process.pid, type)
-    }
-  })
-})
+consumer.on("error", function(err) {
+  console.error(err);
+});
+consumer.on("ready", function(arg) {
+  console.log(`Consumer ${arg.name} ready`);
+  consumer.subscribe(topics);
+  consumer.consume();
+});
+consumer.on("data", function(m) {
+  const message = JSON.parse(m.value.toString());
+  console.log(message);
+  messages.push(message);
+  io.sockets.emit('message', messages);
+  consumer.commit(m);
+});
+consumer.on("disconnected", function(arg) {
+  process.exit();
+});
+consumer.on('event.error', function(err) {
+  console.error(err);
+  process.exit(1);
+});
+consumer.on('event.log', function(log) {
+  console.log(log);
+});
+consumer.connect();
 
